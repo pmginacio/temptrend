@@ -1,3 +1,6 @@
 [submodule "grids"]
 	path = grids
 	url = git+ssh://git@github.com/pmginacio/grids
+[submodule "utils"]
+	path = utils
+	url = git+ssh://git@github.com/pmginacio/utils
