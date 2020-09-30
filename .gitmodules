@@ -4,3 +4,6 @@
 [submodule "utils"]
 	path = utils
 	url = git+ssh://git@github.com/pmginacio/utils
+[submodule "dates"]
+	path = dates
+	url = git+ssh://git@github.com/pmginacio/dates
