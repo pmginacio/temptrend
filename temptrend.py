@@ -1,18 +1,23 @@
 #!/usr/bin/python
-#	Compute temperature trends
+#	utility to compute temperature anomaly trends from the GHCN dataset
 #@ Created by P.Inacio <pedromiragaia@gmail.com>
 
 # load packages
 import numpy as np
+import ghcn
 import datetime
 import grids
 import dates
 from utils import call
 import os
 import argparse
+import itertools
 
 # profiling
 import time
+
+# plot
+import matplotlib.pyplot as plt
 
 # functions
 def main():
@@ -20,74 +25,56 @@ def main():
 	# Build parser and parse the input arguments
 	args = parse_args()
 
-	# defaults
-	ldates = dates.date_range(dates.parse_date_range(args.date_range))
-	print ldates
+	# parse date range
+	ldates = dates.range_date(*dates.parse_date_range(args.daterange))
 
-	# load data
-	print "Loading grids ..."
-	tick = time.time()
-	ldates = [ghcn_defaults('initial date') + x*days for x in range(30)]
-	lgrds = map(ghcn_load, ldates)
-	tock = time.time() - tick
-	print '	Elapsed time: %f' % (tock,)
+	# 
+	tfile = ghcn.path('trend', ldates)
+	bfile = ghcn.path('bias', ldates)
 
-	# accumulate all grids 
-	print "Accumulating LS system ..."
-	tick = time.time()
-	sumA = reduce(np.add, map(grd_to_trend_ls, lgrds))
-	tock = time.time() - tick
-	print '	Elapsed time: %f' % (tock,)
+	if ((os.path.isfile(tfile) and os.path.isfile(bfile)) and 
+			not args.recompute):
 
-	# solve the ls of equations
-	print "Computing trend ..."
-	trend, bias = solve_trend_ls(sumA)
+		print "Loading existing results ..."
+		trend = grids.load(tfile)
+		bias = grids.load(bfile)
 
-	# now create corresponding grids
-	aux = lgrds[0]
-	gtrend = grids.Grid(xlim=aux.xlim,ylim=aux.ylim,dx=aux.dx,dy=aux.dy,z=np.reshape(trend,(aux.ny, aux.nx)))
-	gbias = grids.Grid(xlim=aux.xlim,ylim=aux.ylim,dx=aux.dx,dy=aux.dy,z=np.reshape(bias,(aux.ny, aux.nx)))
+	else:
 
-	# save to file
-	tfile = 'trend_from_%s_to_%s' % (str(lgrds[0].date), str(lgrds[-1].date))
-	gtrend.save(tfile+'.pkl')
-	gtrend.plot(tfile+'.pdf', sym_colorbar=True)
-	print "Saved trend: %s" % (tfile,)
+		trend, bias = compute_trend(ldates)
 
-	tbias = 'bias_from_%s_to_%s' % (str(lgrds[0].date), str(lgrds[-1].date))
-	gbias.save(tbias+'.pkl')
-	gbias.plot(tbias+'.pdf', sym_colorbar=True)
+	# plot grid
+	tplot = ghcn.path('trend plot',date=ldates)
+	trend.plot(tplot, sym_colorbar=True, transpose=True)
+	print "Saved plot: %s" % (tplot,)
 
-	return
+	# plot timeseries
+	if args.timeseries:
+
+		# get lon, lat pair
+		lon, lat = args.timeseries
+
+		# load timeseries for a coordinate
+		print "Loading timeseries for (%.2f,%.2f) ..." % (lon, lat)
+		s = np.array(map(lambda x: x[lon,lat], map(ghcn.load, ldates)))
+
+		# get time idx
+		mdate = ldates[len(ldates)/2]
+		t = np.array([(x - mdate).days for x in ldates])
+
+		# get fit
+		f = trend[lon,lat]/365.0*t + bias[lon,lat]
+
+		# plot
+		plot_timeseries(t, s, f, lon, lat, ldates)
 	
-# PLOT FIT ON A GRID
-# # plot debug
-
-# # Data for plotting
-# # import matplotlib
-# import matplotlib.pyplot as plt
-
-# t = list(x[0] for x in data[6911])
-# s = list(x[1] for x in data[6911])
-
-# mdl = fit[:,6911]
-# f = [x*mdl[0] + mdl[1] for x in t]
-
-# fig, ax = plt.subplots()
-# ax.plot(t, s)
-# ax.plot(t, f)
-# # ax.set(xlabel='time (s)', ylabel='voltage (mV)',
-# #        title='About as simple as it gets, folks')
-# # ax.grid()
-# fig.savefig("test.pdf")
-
 def parse_args():
 	"""
 	returns a parser to take care of the input arguments
 	"""
 
 	# Define the input parser
-	desc = "computes long term temperatur anomaly trend for the GHNC dataset"
+	desc = "computes long term temperature anomaly trend for the GHNC dataset"
 	epilog = """
 datarange input argument is of the format:
 		   YYYY[MM[DD]][:YYYY[MM[DD]]]
@@ -98,19 +85,60 @@ value for the lower bound and to the maximum possible for the upper
 one. For example,
 	2006    is equivalent to 2006/01/01:2006/12/31
 	2006/02 is equivalent to 2006/02/01:2006/02/28
-
-prod input arguments can be any of:
 """
 
 	parser = argparse.ArgumentParser(description=desc, epilog=epilog,
 						formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("daterange",
 						help="range of dates to make available locally")
+	parser.add_argument('-t',"--timeseries",nargs=2,metavar=('lon','lat'),type=float,
+						help="plot timeseries for the lon lat pair of coordinates")
+	parser.add_argument('-r',"--recompute",default=False,action='store_true',
+						help="force recompute trend")
 
 	return parser.parse_args()
 
 
-def grd_to_trend_ls(dgrd):
+def compute_trend(ldates):
+	'''
+	request trend computation for the input list of dates
+	'''
+
+	# accumulate all grids 
+	# notice that the reduce(map ...) allows for minimal memory usage
+	# and for code parelellization
+	print "Accumulating LS system ..."
+	tick = time.time()
+	sumA = reduce(np.add, map(grd_to_trend_ls, 
+		map(ghcn.load, ldates), itertools.repeat(ldates[len(ldates)/2],len(ldates))))
+	tock = time.time() - tick
+	print '	Elapsed time: %f' % (tock,)
+
+	# solve the ls of equations
+	print "Computing trend ..."
+	trend, bias = solve_trend_ls(sumA, thrs=len(ldates)/10.0)
+
+	# now create corresponding grids
+	aux = ghcn.load(ldates[0])
+	trend = grids.Grid(xlim=aux.xlim,ylim=aux.ylim,dx=aux.dx,dy=aux.dy,
+		z=np.reshape(trend,(aux.nx, aux.ny)),
+		zlabel='temperature anomaly trend',zunit='deg/yr',
+		xlabel='longitude',xunit='deg',
+		ylabel='latitude',yunit='deg')
+	bias = grids.Grid(xlim=aux.xlim,ylim=aux.ylim,dx=aux.dx,dy=aux.dy,
+		z=np.reshape(bias,(aux.nx, aux.ny)))
+
+	if not os.path.isdir(ghcn.path('results')):
+		os.makedirs(ghcn.path('results'))
+
+	tfile = ghcn.path('trend',ldates)
+	trend.save(tfile)
+	bias.save(ghcn.path('bias',ldates))
+	print "Saved plot: %s" % (tfile,)
+
+	return trend, bias	
+
+def grd_to_trend_ls(dgrd, mdate):
 	'''
 	Given a list set of temperature observations y at time indexes t,
 	I want to fit the linear model y = m.t + b to the data where,
@@ -162,31 +190,28 @@ def grd_to_trend_ls(dgrd):
 	# defaults
 	seconds_in_year = 365*24*3600
 
-	# elapsed time since beggining dataset
-	ghcn_initial_date = ghcn_defaults('initial date')
-	t = (dgrd.date - ghcn_initial_date).total_seconds()/seconds_in_year
+	# elapsed time since middle of the dataset
+	t = (dgrd.date - mdate).total_seconds()/seconds_in_year
 	
 	# grid size
 	n = dgrd.nx*dgrd.ny
 
-	# flatten the temperature 
-	Y = dgrd.z.flatten()
+	# 
+	Z = dgrd.z.reshape(n,1)
+	T = np.tile(t,(n,1))
 
-	# vetorize the time index to build matrix
-	T = np.tile(t, (1, n))
+	A = np.stack((
+			np.hstack((T**2, T)),
+			np.hstack((T, np.ones((n,1)))),
+			np.hstack((Z*T, T))),axis=2)
 
-	# build accumulation matrix
-	B = np.vstack((T**2, T, T, np.ones((1,n)), T*Y, Y))
-
-	# build bolean index
-	I = np.tile(np.isfinite(Y),(6, 1))
-
-	# return zero where no data exists
-	A = np.where(I,B,0)
+	# set invalid grid nodes to 0
+	I = np.isnan(Z).flatten()
+	A[I,:,:] = 0
 
 	return A
 
-def solve_trend_ls(sumA):
+def solve_trend_ls(sumA, thrs=1):
 	'''
 	Now take the accumulated A matrix, reshape it and solve for each grid 
 	node
@@ -197,177 +222,34 @@ def solve_trend_ls(sumA):
 	I will skip nodes with one or less data points.
 	'''
 
-	# loop the grid nodes in the columns
-	fit = np.zeros((2, sumA.shape[1]))
-	for c in range(sumA.shape[1]):
+	# exclude nodes with less than thrs number of points
+	I = (sumA[:,1,1] > thrs).flatten()
 
-		# compute trend only if there is more than one data point 
-		# accumulated
-		if sumA[3,c] > 1:
-			# print 'c=', c
-			col = sumA[:,c].copy()
-			# print 'col=', col
-			N = np.reshape(col[0:4],(2,2))
-			# print 'N=', N
-			Y = col[4:]
-			# print 'Y=', Y
-			X = np.linalg.solve(N,Y)
-			# print 'X=', X
-			fit[:,c] = X
+	N = sumA[:,:,0:2]
+	Y = sumA[:,:,2]
 
-	trend = fit[0,:]
-	bias = fit[1,:]
+	X = np.full((len(sumA),2),np.nan)
+	X[I,:] = np.linalg.solve(N[I,:,:],Y[I,:])
+
+	trend, bias = np.hsplit(X,2)
 
 	return trend, bias
 
-def ghcn_defaults(key):
+def plot_timeseries(t, s, f, lon, lat, ldates):
 	'''
-	return paths for different ghcn dataset files
+	create a plot for the timeseries s and the fitter linear model t
 	'''
-
-	if key == 'initial date':
-		return datetime.date(1950,01,01)
-	elif key == 'final date':
-		# TODO: check this
-		return datetime.date(2020,06,01)
-	elif key == 'xlim':
-		return [-180.0, 176.25]
-	elif key == 'ylim':
-		return [-90, 90.0]
-	else:
-		raise ValueError('wrong key')
-
-def ghcn_path(key, date=None):
-	'''
-	return paths for different ghcn dataset files
-	'''
-
-	if key == 'url':
-		return 'ftp://ftp.ncdc.noaa.gov/pub/data/ghcn/daily/grid/years/%d.tmax' % date.year
-	elif key == 'base':
-		return os.path.abspath(os.path.dirname(__file__))
-	elif key == 'yearly dir':
-		return os.path.join(ghcn_path('base'),'data')
-	elif key == 'yearly file':
-		aux = 'tmp_%d.tmax' % (date.year,)
-		return os.path.join(ghcn_path('yearly dir'), aux)
-	elif key == 'daily dir':
-		aux = '%d' % (date.year,)
-		return os.path.join(ghcn_path('base'),'data','daily',aux)
-	elif key == 'daily file':
-		aux = '%d%02d%02d.pbz2' % (date.year,date.month,date.day)
-		return os.path.join(ghcn_path('daily dir', date), aux)
-	else:
-		raise ValueError('wrong key')
-
-def ghcn_load(date):
-	'''
-	return a tmax grid for the specified date
-	'''
-
-	# check if the daily file is there
-	dfile = ghcn_path('daily file',date)
-
-	# if file does not exist need to preprocess this year
-	if not os.path.isfile(dfile):
-		ghcn_preprocess(date)
-
-	# now load the daily file
-	return grids.load(dfile)
-
-
-def ghcn_preprocess(date):
-	'''
-	read the file and pickle all daily grids, return the requested grid.
-	'''
-
-	# check if the daily file is there
-	yfile = ghcn_path('yearly file',date)
-
-	# make sure the file exists
-	if not os.path.isfile(yfile):
-		ghcn_preload(date)
-
-	# read the file and create daily grids
-	# 1st column: Month
-	# 2nd column: Day
-	# 3rd column: Grid box ID (value range: 1 to 7004, grid spacing = 3.75 deg x 2.5 deg)
-	# 4th column: Longitude of lower left corner of grid box (degrees)
-	# 5th column: Latitude of lower left corner of grid box (degrees)
-	# 6th column: Temperature anomaly (whole degrees Celsius) 
-	raw = np.loadtxt(yfile)
-	# print 'DEBUG: only reading partial file'
-	# raw = np.loadtxt(yfile, max_rows=20000)
-
-	# loop the raw data and create a grid for each day
-	rmonth,rday = (int(z) for z in raw[0,0:2])
-	istart = 0
-	for i, x in enumerate(raw):
-
-		# find index at which day changes
-		if rday != x[1]:
-
-			# make new grid
-			rdate = datetime.date(date.year,rmonth,rday)
-			ghnc_pickle_grid(raw[istart:i,3:],rdate)
-
-			# new day
-			istart = i
-			rmonth,rday = (int(z) for z in x[0:2])
-
-	# save the last day of the year
-	rdate = datetime.date(date.year,rmonth,rday)
-	ghnc_pickle_grid(raw[istart:,3:],rdate)
-
-	# post
-	ghnc_postload(date)
-
-def ghnc_pickle_grid(raw, rdate):
-	'''
-	Create a Grid from data raw with date rdate and store it in 
-	the data folder 
-	'''
-
-	dgrd = grids.Grid(xyz=raw, date=rdate,
-			xlim=ghcn_defaults('xlim'),ylim=ghcn_defaults('ylim'))
-
-	# create directory for daily files it not existent
-	ddir = ghcn_path('daily dir', rdate)
-	if not os.path.isdir(ddir):
-		os.makedirs(ddir)
-
-	dgrd.save(ghcn_path('daily file', rdate))
-	print 'INFO: stored grid: '+str(rdate)
-
-def ghcn_preload(date):
-	'''
-	download the yearly ghcn grid file and return a path to that file
-	'''
-
-	# check data range
-	ghcn_in = ghcn_defaults('initial date')
-	ghcn_fn = ghcn_defaults('final date')
-	if date < ghcn_in or date > ghcn_fn:
-		raise ValueError('year must be between', ghcn_in ,'and ', ghcn_fn)
-
-	# create subdirectories if not available
-	ydir = ghcn_path('yearly dir', date)
-	if not os.path.isdir(ydir):
-		os.makedirs(ydir)
-
-	# download yearly file if not available
-	rfile = ghcn_path('url', date)
-	lfile = ghcn_path('yearly file', date)
-
-	if not os.path.isfile(lfile):
-		call('wget -O'+' '.join([lfile, rfile]), live=True)
-
-def ghnc_postload(date):
-	'''
-	delete the downloaded text file as we do not need it anymore
-	'''
-
-	os.remove(ghcn_path('yearly file', date))
+	
+	fig, ax = plt.subplots()
+	ax.plot(t, s)
+	ax.plot(t, f)
+	ax.set(xlabel='# days', ylabel='temperature anomaly [deg]',
+	        title='Temperature anomaly for (%.2f,%.2f) \nbetween %s and %s' % (lon, lat, 
+	        	str(ldates[0]), str(ldates[-1])))
+	ax.grid()
+	tsplot = ghcn.path('timeseries',date=ldates,ix=0,iy=0)
+	fig.savefig(tsplot)
+	print "Saved plot: %s" % (tsplot,)
 
 # this idiom means the below code only runs when executed from command line
 if __name__ == '__main__':
