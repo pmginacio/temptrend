@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 #	utility to compute temperature anomaly trends from the GHCN dataset
-#@ Created by P.Inacio <pedromiragaia@gmail.com>
+# 	run "temptrend -h" for instruction on how to use this utility
+#
+# Created by P.Inacio <pedromiragaia@gmail.com>
 
 # load packages
 # plot

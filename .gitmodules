@@ -1,9 +1,9 @@
 [submodule "grids"]
 	path = grids
-	url = git+ssh://git@github.com/pmginacio/grids
+	url = https://github.com/pmginacio/grids.git
 [submodule "utils"]
 	path = utils
-	url = git+ssh://git@github.com/pmginacio/utils
+	url = https://github.com/pmginacio/utils.git
 [submodule "dates"]
 	path = dates
-	url = git+ssh://git@github.com/pmginacio/dates
+	url = https://github.com/pmginacio/dates

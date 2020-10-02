@@ -10,5 +10,5 @@ RUN pip install --no-cache-dir numpy matplotlib
 COPY . .
 
 # run the command
-# ENTRYPOINT ["./temptrend.py"]
-CMD ["/bin/bash"]
+ENTRYPOINT ["./temptrend.py"]
+# CMD ["/bin/bash"]
