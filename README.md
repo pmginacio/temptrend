@@ -117,8 +117,7 @@ The core of temptrend is the single instruction
 
     sumA = reduce(np.add, 
         map(grd_to_trend_ls, 
-          map(ghcn.load, ldates), itertools.repeat(ldates[len(
-            ldates)/2],len(ldates))))
+          map(ghcn.load, ldates), itertools.repeat(ldates[len(ldates)/2],len(ldates))))
 
 where the daily grids are read, a LS accumulation matrix is computed and the resulting matrices are accumulated in sumA.
 This is done quickly and the amount of memory is low and constant with respect to the length of the dataset considered.
