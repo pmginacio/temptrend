@@ -2,7 +2,7 @@ import os
 import datetime
 import grids
 import numpy as np
-from utils import call
+import utils
 
 def defaults(key):
 	'''
@@ -26,46 +26,50 @@ def defaults(key):
 def path(key, date=None, ix=None, iy=None):
 	'''
 	return paths for different ghcn dataset files
+	create directories when they are requested
 	'''
 
 	if key == 'url':
 		return 'ftp://ftp.ncdc.noaa.gov/pub/data/ghcn/daily/grid/years/%d.tmax' % date.year
 	elif key == 'base':
 		return os.path.abspath(os.path.dirname(__file__))
-	elif key == 'yearly dir':
-		return os.path.join(path('base'),'data')
+	elif key == 'data':
+		return utils.makedir_if_not_exist(os.path.join(path('base'),'data'))
 	elif key == 'yearly file':
 		aux = 'tmp_%d.tmax' % (date.year,)
-		return os.path.join(path('yearly dir'), aux)
+		return os.path.join(path('data'), aux)
 	elif key == 'daily dir':
 		aux = '%d' % (date.year,)
-		return os.path.join(path('base'),'data','daily',aux)
+		ddir = os.path.join(path('base'),'data','daily',aux)
+		return utils.makedir_if_not_exist(ddir)
 	elif key == 'daily file':
 		aux = '%d%02d%02d.pbz2' % (date.year,date.month,date.day)
 		return os.path.join(path('daily dir', date), aux)
-	elif key == 'results':
-		return os.path.join(path('base'),'results')
+	elif key == 'computed':
+		return utils.makedir_if_not_exist(os.path.join(path('data'),'computed'))
 	elif key == 'trend':
-		return os.path.join(path('results'), 
+		return os.path.join(path('computed'), 
 			'trend_from_%s_to_%s.pbz2' % (str(date[0]), str(date[-1])))
 	elif key == 'bias':
-		return os.path.join(path('results'), 
+		return os.path.join(path('computed'),
 			'bias_from_%s_to_%s.pbz2' % (str(date[0]), str(date[-1])))
+	elif key == 'results':
+		return os.path.join(path('base'),'results')
 	elif key == 'trend plot':
-		return os.path.join(path('base'), 
+		return os.path.join(path('results'), 
 			'trend_from_%s_to_%s.pdf' % (str(date[0]), str(date[-1])))
 	elif key == 'timeseries':
-		return os.path.join(path('base'), 
+		return os.path.join(path('results'), 
 			'trend_from_%s_to_%s_%d_%d.pdf' % (str(date[0]), str(date[-1]),ix,iy))
 	else:
-		raise ValueError('wrong key')
+		raise ValueError('wrong key: %s' % key)
 
 def load(date):
 	'''
 	return a tmax grid for the specified date
 	'''
 
-	# check if the daily file is there
+	# get the daily grid filename
 	dfile = path('daily file',date)
 
 	# if file does not exist need to preprocess this year
@@ -78,7 +82,7 @@ def load(date):
 
 def preprocess(date):
 	'''
-	read the file and pickle all daily grids, return the requested grid.
+	read the yearly file and pickle all daily grids
 	'''
 
 	# check if the daily file is there
@@ -89,7 +93,6 @@ def preprocess(date):
 		preload(date)
 
 	print "Loading daily grids ..."
-
 	# read the file and create daily grids
 	# 1st column: Month
 	# 2nd column: Day
@@ -133,11 +136,7 @@ def pickle_grid(raw, rdate):
 	dgrd = grids.Grid(xyz=raw, date=rdate,
 			xlim=defaults('xlim'),ylim=defaults('ylim'))
 
-	# create directory for daily files it not existent
-	ddir = path('daily dir', rdate)
-	if not os.path.isdir(ddir):
-		os.makedirs(ddir)
-
+	# save
 	dgrd.save(path('daily file', rdate))
 
 def preload(date):
@@ -151,18 +150,13 @@ def preload(date):
 	if date < ghcn_in or date > ghcn_fn:
 		raise ValueError('year must be between', ghcn_in ,'and ', ghcn_fn)
 
-	# create subdirectories if not available
-	ydir = path('yearly dir', date)
-	if not os.path.isdir(ydir):
-		os.makedirs(ydir)
-
 	# download yearly file if not available
 	rfile = path('url', date)
 	lfile = path('yearly file', date)
 
 	if not os.path.isfile(lfile):
 		print "Downloading %s ..." % rfile
-		call('wget -O'+' '.join([lfile, rfile]), live=True)
+		utils.call('wget -O'+' '.join([lfile, rfile]), live=True)
 
 def postload(date):
 	'''

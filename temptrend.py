@@ -1,8 +1,14 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #	utility to compute temperature anomaly trends from the GHCN dataset
 #@ Created by P.Inacio <pedromiragaia@gmail.com>
 
 # load packages
+# plot
+import matplotlib
+# 	force matplotlib to not use any Xwindows backend.
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
+
 import numpy as np
 import ghcn
 import datetime
@@ -16,8 +22,6 @@ import itertools
 # profiling
 import time
 
-# plot
-import matplotlib.pyplot as plt
 
 # functions
 def main():
@@ -107,7 +111,6 @@ def compute_trend(ldates):
 	# accumulate all grids 
 	# notice that the reduce(map ...) allows for minimal memory usage
 	# and for code parelellization
-	print "Accumulating LS system ..."
 	tick = time.time()
 	sumA = reduce(np.add, map(grd_to_trend_ls, 
 		map(ghcn.load, ldates), itertools.repeat(ldates[len(ldates)/2],len(ldates))))
@@ -131,10 +134,9 @@ def compute_trend(ldates):
 	if not os.path.isdir(ghcn.path('results')):
 		os.makedirs(ghcn.path('results'))
 
-	tfile = ghcn.path('trend',ldates)
-	trend.save(tfile)
+	# save computed results
+	trend.save(ghcn.path('trend',ldates))
 	bias.save(ghcn.path('bias',ldates))
-	print "Saved plot: %s" % (tfile,)
 
 	return trend, bias	
 
